@@ -1,0 +1,163 @@
+#include <ql/qldefines.hpp>
+#ifdef BOOST_MSVC
+#  include <ql/auto_link.hpp>
+#endif
+// #include "utilities.hpp"
+#include <ql/time/daycounters/actual360.hpp>
+#include <ql/instruments/asianoption.hpp>
+#include <ql/pricingengines/asian/analytic_discr_geom_av_price.hpp>
+#include <ql/pricingengines/asian/analytic_discr_geom_av_strike.hpp>
+#include <ql/pricingengines/asian/analytic_cont_geom_av_price.hpp>
+#include <ql/pricingengines/asian/mc_discr_geom_av_price.hpp>
+#include <ql/pricingengines/asian/mc_discr_arith_av_price.hpp>
+#include <ql/pricingengines/asian/mc_discr_arith_av_strike.hpp>
+#include <ql/pricingengines/asian/fdblackscholesasianengine.hpp>
+#include <ql/experimental/exoticoptions/continuousarithmeticasianlevyengine.hpp>
+#include <ql/experimental/exoticoptions/continuousarithmeticasianvecerengine.hpp>
+#include <ql/termstructures/yield/flatforward.hpp>
+#include <ql/termstructures/volatility/equityfx/blackconstantvol.hpp>
+#include <ql/utilities/dataformatters.hpp>
+#include <map>
+
+#include <ql/instruments/payoffs.hpp>
+#include <ql/indexes/indexmanager.hpp>
+#include <ql/termstructures/yield/flatforward.hpp>
+#include <ql/termstructures/volatility/equityfx/blackconstantvol.hpp>
+#include <ql/time/calendars/nullcalendar.hpp>
+
+#include <iostream>
+#include <iomanip>
+
+#include "mcphoenixengine.hpp"
+#include "phoenixoption.hpp"
+
+using namespace QuantLib;
+
+#if defined(QL_ENABLE_SESSIONS)
+namespace QuantLib {
+
+    Integer sessionId() { return 0; }
+
+}
+#endif
+
+
+   ext::shared_ptr<YieldTermStructure>
+    flatRate(const Date& today,
+             const ext::shared_ptr<Quote>& forward,
+             const DayCounter& dc) {
+        return ext::shared_ptr<YieldTermStructure>(
+                          new FlatForward(today, Handle<Quote>(forward), dc));
+    }
+
+    ext::shared_ptr<YieldTermStructure>
+    flatRate(const Date& today, Rate forward, const DayCounter& dc) {
+        return flatRate(
+               today, ext::shared_ptr<Quote>(new SimpleQuote(forward)), dc);
+    }
+
+    ext::shared_ptr<YieldTermStructure>
+    flatRate(const ext::shared_ptr<Quote>& forward,
+             const DayCounter& dc) {
+        return ext::shared_ptr<YieldTermStructure>(
+              new FlatForward(0, NullCalendar(), Handle<Quote>(forward), dc));
+    }
+
+    ext::shared_ptr<YieldTermStructure>
+    flatRate(Rate forward, const DayCounter& dc) {
+        return flatRate(ext::shared_ptr<Quote>(new SimpleQuote(forward)),
+                        dc);
+    }
+
+
+    ext::shared_ptr<BlackVolTermStructure>
+    flatVol(const Date& today,
+            const ext::shared_ptr<Quote>& vol,
+            const DayCounter& dc) {
+        return ext::shared_ptr<BlackVolTermStructure>(new
+            BlackConstantVol(today, NullCalendar(), Handle<Quote>(vol), dc));
+    }
+
+    ext::shared_ptr<BlackVolTermStructure>
+    flatVol(const Date& today, Volatility vol,
+            const DayCounter& dc) {
+        return flatVol(today,
+                       ext::shared_ptr<Quote>(new SimpleQuote(vol)),
+                       dc);
+    }
+
+    ext::shared_ptr<BlackVolTermStructure>
+    flatVol(const ext::shared_ptr<Quote>& vol,
+            const DayCounter& dc) {
+        return ext::shared_ptr<BlackVolTermStructure>(new
+            BlackConstantVol(0, NullCalendar(), Handle<Quote>(vol), dc));
+    }
+
+    ext::shared_ptr<BlackVolTermStructure>
+    flatVol(Volatility vol,
+            const DayCounter& dc) {
+        return flatVol(ext::shared_ptr<Quote>(new SimpleQuote(vol)), dc);
+    }
+
+int main(int, char* []){
+	DayCounter dc = Actual360();
+    Date today = Settings::instance().evaluationDate();
+
+    ext::shared_ptr<SimpleQuote> spot(new SimpleQuote(100.0));
+    ext::shared_ptr<SimpleQuote> qRate(new SimpleQuote(0.03));
+    ext::shared_ptr<YieldTermStructure> qTS = flatRate(today, qRate, dc);
+    ext::shared_ptr<SimpleQuote> rRate(new SimpleQuote(0.06));
+    ext::shared_ptr<YieldTermStructure> rTS = flatRate(today, rRate, dc);
+    ext::shared_ptr<SimpleQuote> vol(new SimpleQuote(0.20));
+    ext::shared_ptr<BlackVolTermStructure> volTS = flatVol(today, vol, dc);
+
+    Average::Type averageType = Average::Arithmetic;
+    Real runningSum = 0.0;
+    Size pastFixings = 0;
+
+	ext::shared_ptr<StrikedTypePayoff> payoff(new
+		PlainVanillaPayoff(Option::Call, 100.0));
+
+	Time dt = 11.0/12.0/(2.0-1);
+	std::vector<Time> timeIncrements(2.0);
+	std::vector<Date> fixingDates(2.0);
+	timeIncrements[0] = 0.0;
+
+
+	fixingDates[0] = today + Integer(timeIncrements[0]*360+0.5);
+	for (Size i=1; i<2; i++) {
+		timeIncrements[i] = i*dt + 0;
+		fixingDates[i] = today + Integer(timeIncrements[i]*360+0.5);
+	}
+	ext::shared_ptr<Exercise> exercise(new
+		EuropeanExercise(fixingDates[1]));
+
+	spot ->setValue(90);
+	qRate->setValue(0.06);
+	rRate->setValue(0.025);
+	vol  ->setValue(0.13);
+
+	//QL_REQUIRE(1 == 2, "no principal given");
+
+	ext::shared_ptr<BlackScholesMertonProcess> stochProcess(new
+		BlackScholesMertonProcess(Handle<Quote>(spot),
+									Handle<YieldTermStructure>(qTS),
+									Handle<YieldTermStructure>(rTS),
+									Handle<BlackVolTermStructure>(volTS)));
+
+	ext::shared_ptr<PricingEngine> engine =
+		MakeMCPhoenixEngine<PseudoRandom>(stochProcess)
+		.withStepsPerYear(1)
+		.withBrownianBridge()
+		.withSamples(131071)
+		.withMaxSamples(1048575)
+		.withSeed(3456789);
+
+	PhoenixOption option(100, 110, 80, 0.15, payoff, exercise);
+	option.setPricingEngine(engine);
+
+	Real calculated = option.NPV();
+
+	std::cout<< calculated << std::endl;
+
+}
