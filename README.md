@@ -10,3 +10,18 @@ quantlib中需个性化的内容
   QuantLib已经增加了中国节假日的支持，但每年都需要重新编译整个工程。
   可以单独抽取出calender类，使用外部链接到自己的工程中。
   china.cpp 中节假日参考 http://www.sse.com.cn/disclosure/dealinstruc/closed/
+
+--- 这都可以被质疑
+    //! default traits for pseudo-random number generation
+    /*! \test a sequence generator is generated and tested by comparing
+              samples against known good values.
+    */
+    typedef GenericPseudoRandom<MersenneTwisterUniformRng,
+                                InverseCumulativeNormal> PseudoRandom;
+
+    //! traits for Poisson-distributed pseudo-random number generation
+    /*! \test sequence generators are generated and tested by comparing
+              samples against known good values.
+    */
+    typedef GenericPseudoRandom<MersenneTwisterUniformRng,
+                                InverseCumulativePoisson> PoissonPseudoRandom;
